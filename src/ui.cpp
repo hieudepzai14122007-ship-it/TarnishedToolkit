@@ -95,6 +95,18 @@ void player(const Snapshot& s) {
             if(ImGui::SmallButton("Clear")){Command c{Action::ClearStatus,s.generation};c.index=i;enqueue(c);}ImGui::PopID();}
         ImGui::EndDisabled();if(!s.statusValid)ImGui::TextDisabled("Buildup data unavailable.");
     }
+    ImGui::SeparatorText("FLYING");
+    bool flying=s.flying;Command fly{Action::Flight,s.generation,!flying};
+    auto flyReason=rejection(s,fly);ImGui::BeginDisabled(!flyReason.empty());
+    if(ImGui::Checkbox("Enable flying (on foot)",&flying))enqueue({Action::Flight,s.generation,flying});
+    ImGui::EndDisabled();
+    if(!flyReason.empty())ImGui::TextWrapped("%s",flyReason.c_str());
+    float flightSpeed=s.flightSpeed;Command flightSpeedCommand{Action::FlightSpeed,s.generation};flightSpeedCommand.value=flightSpeed;
+    ImGui::BeginDisabled(!rejection(s,flightSpeedCommand).empty());
+    if(ImGui::SliderFloat("Flying speed",&flightSpeed,.5f,10.f,"%.1f m/s")){flightSpeedCommand.value=flightSpeed;enqueue(flightSpeedCommand);}
+    ImGui::EndDisabled();
+    ImGui::TextWrapped("Close the menu: I/K and J/L move horizontally in fixed world directions. Page Up rises; Page Down descends. Movement pauses with the menu open or when unfocused. Keyboard only.");
+    ImGui::TextWrapped("Descend near the ground before stopping. Mounting, loading, character changes, profiles and Disable All stop flying. No terrain/cutscene or death-zone protection; this is experimental, not verified noclip.");
     ImGui::SeparatorText("TORRENT");
     bool jumping=s.torrentJump;Command jump{Action::TorrentJump,s.generation,!jumping};
     auto jumpReason=rejection(s,jump);ImGui::BeginDisabled(!jumpReason.empty());
@@ -150,7 +162,7 @@ void profilesPanel(const Snapshot& s){
     ImGui::TextWrapped("Boss Learner, Glass Cannon and Photo presets await their damage/camera adapters. Vanilla disables temporary effects; it cannot undo persistent grants.");
 }
 void home(const Snapshot& s){
-    heading("OFFLINE PRACTICE","Experimental build 0.2.5. Opening the menu does not pause gameplay.");
+    heading("OFFLINE PRACTICE","Experimental build 0.2.6. Opening the menu does not pause gameplay.");
     ImGui::PushStyleColor(ImGuiCol_Text,s.ready?ImVec4(.5f,.75f,.45f,1):gold);ImGui::TextWrapped("%s",s.dataStatus.c_str());ImGui::PopStyleColor();
     ImGui::TextWrapped("Gameplay changes have not been tested in-game in this build. Session mode is not detected. Use offline single-player and a backed-up test character; inventory and rune grants can persist.");
     bool armed=s.offlineDeclared;
@@ -164,6 +176,7 @@ void home(const Snapshot& s){
     if(s.statusMask)ImGui::Text("Status suppression active: mask %u",unsigned(s.statusMask));
     if(s.speedActive)ImGui::Text("Simulation speed active: %.2fx",s.speed);
     if(s.torrentJump){ImGui::TextColored(gold,"Active: Infinite Torrent double jumps");ImGui::SameLine();if(ImGui::SmallButton("Stop Torrent jumps"))enqueue({Action::TorrentJump,s.generation,false});}
+    if(s.flying){ImGui::TextColored(gold,"Active: Flying (%.1f m/s)",s.flightSpeed);ImGui::SameLine();if(ImGui::SmallButton("Stop flying"))enqueue({Action::Flight,s.generation,false});}
     if(!pinned.empty()){ImGui::TextColored(gold,"Favorites");for(auto& id:pinned){int n=id[0]-'0';if(ImGui::Button(labels[n]))category=n;ImGui::SameLine();}ImGui::NewLine();}
     resource("HEALTH",s.current[0],s.maximum[0],{.59f,.24f,.22f,1},s.ready);
     resource("FOCUS",s.current[1],s.maximum[1],{.23f,.41f,.65f,1},s.ready);

@@ -1,4 +1,4 @@
-# Tarnished Toolkit 0.2.5 beta
+# Tarnished Toolkit 0.2.6 beta
 
 An in-game DirectX 12 menu for the fingerprinted Elden Ring 2.7.0.0 and 2.7.1.0 installations. This update implements the cursor recenter/confinement fix and adds experimental trainer and planning tools. **The new input and gameplay changes have not been tested in-game.** The game and renderer host were not launched for this update.
 
@@ -6,8 +6,8 @@ An in-game DirectX 12 menu for the fingerprinted Elden Ring 2.7.0.0 and 2.7.1.0 
 
 ### 1. Download the compiled mod
 
-1. Open the [0.2.5 beta release](https://github.com/hieudepzai14122007-ship-it/TarnishedToolkit/releases/tag/v0.2.5-beta).
-2. Expand **Assets** and download **TarnishedToolkit-0.2.5-separated-launches.zip**. The automatic **Source code** downloads do not contain the compiled DLL.
+1. Open the [0.2.6 beta release](https://github.com/hieudepzai14122007-ship-it/TarnishedToolkit/releases/tag/v0.2.6-beta).
+2. Expand **Assets** and download **TarnishedToolkit-0.2.6-flying.zip**. The automatic **Source code** downloads do not contain the compiled DLL.
 3. Right-click the downloaded ZIP, choose **Extract All**, and keep the complete `TarnishedToolkit` folder. The mod is `TarnishedToolkit/build/TarnishedToolkit.dll`; you do not need to compile it yourself.
 
 ### 2. Check requirements and back up your save
@@ -62,6 +62,7 @@ Successful separation creates a sibling `OfflineGame` folder and a desktop **Eld
 
 | What you want | Where to go and what to do |
 | --- | --- |
+| Fly | Dismount, open **Player > Flying**, and enable **Enable flying (on foot)**. Close the menu. **I/K** and **J/L** move in fixed horizontal directions; **Page Up / Page Down** rise/descend. Adjust speed from 0.5 to 10 m/s in the menu. Descend near the ground before stopping. |
 | Edit stats | **Player > Character attributes - edit**. Enter values, select **Preview attribute changes**, then **Apply attributes once**. Reload the character before checking derived stats. |
 | Get a weapon | **Items & Builds**, set **Type: Weapons**, select a base-game weapon, choose **Preview persistent item grant**, then **Apply once**. This grants one default +0 copy; DLC grants are unavailable. Maxing your stats is not required. |
 | Jump repeatedly on Torrent | Mount Torrent, open **Player > Torrent**, enable **Infinite Torrent double jumps**, close the menu, and press jump again in the air. The toggle stops on dismount/loading. Fall damage is unchanged. |
@@ -84,6 +85,12 @@ Successful separation creates a sibling `OfflineGame` folder and a desktop **Eld
 | Weapon grant unavailable | Select an eligible base-game weapon and review the message; DLC/unclassified entries are blocked. |
 | Steam reports 0xc000007b or an EAC launch error | Do not use the old toggler to switch modes after separation. Verify Steam's installed game files if normal launch still fails. The error may have causes beyond the mod layout. |
 | Shortcut fails or menu still does not appear | Run **LaunchOffline.ps1 -CheckOnly** from the installed toolkit folder and inspect `%LOCALAPPDATA%\TarnishedToolkit\toolkit.log`. When reporting an issue, include the exact error and game version, and remove personal paths from logs. |
+
+## Flying (experimental)
+
+Confirm offline mode, load a living character, dismount, then use **Player > Flying > Enable flying (on foot)**. It temporarily disables gravity and moves your character with **I/K**, **J/L**, and **Page Up / Page Down**. These horizontal directions are fixed world directions, not camera-relative. Flying speed is adjustable from 0.5 to 10 m/s. Keyboard only; no saved profile or automatic activation.
+
+Opening the menu or switching away from the game pauses flight input while gravity suppression remains active. Dismount is required to enable; mounting, loading, character changes, applying a profile, attribute edits, unchecking offline confirmation, and Disable All stop flight. Gravity is restored only while the original player/physics and owned byte can still be verified. Descend close to stable ground before disabling: there is no landing detector, fall immunity, death-zone protection or verified noclip/collision behavior. The worker clears the local in-air timer during flight; live movement smoothness and collision interactions still require testing. See [flight implementation and checks](docs/FLYING.md).
 
 ## Infinite Torrent jumps
 

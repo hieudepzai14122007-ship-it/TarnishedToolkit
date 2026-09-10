@@ -5,6 +5,8 @@
 #include "runtime.hpp"
 #include "catalog.hpp"
 #include "horse_jump.hpp"
+#include "flight.hpp"
+#include "input.hpp"
 #include <fstream>
 #include <mutex>
 #include <deque>
@@ -22,6 +24,8 @@ uintptr_t base{};
 uint64_t generation{};
 std::array<OwnedByte,3> overrides;
 OwnedBit noDamage;
+OwnedByte noGravity;
+uint64_t lastFlightTick{};
 OwnedValue<float> simulation;
 uint32_t selectedItem{};uint64_t inspected{},lastQuantityTick{};int cachedQuantity=-1;
 bool entryPoints{};
@@ -62,6 +66,25 @@ bool sampleContext(Context& c,std::string* issue=nullptr){
     memory.read(base+flipperRva,c.flipper);return true;
 }
 bool stillCurrent(){Context next;return recognized && sampleContext(next) && current.same(next);}
+bool stopFlight(){
+    if(!noGravity.owned){state.flying=false;lastFlightTick=0;return true;}
+    Context next;
+    bool same=recognized && sampleContext(next) && next.player==current.player && next.handle==current.handle &&
+        next.physics==current.physics && noGravity.address==next.physics+0x1D6;
+    bool restored=noGravity.restore(memory,same?generation:UINT64_MAX);
+    state.flying=false;lastFlightTick=0;return restored;
+}
+bool flightData(std::array<float,3>& position,uintptr_t& fall){
+    uint8_t gravity{},loaded{},fading{};float timer{};uintptr_t menu{};int hp{};
+    // Offsets.cs ChrPhysicsOffsets and Resources.resx NoClip_InAirTimer, pinned MIT source.
+    return state.ready && !state.riding && stillCurrent() && current.physics &&
+        memory.read(base+menuRva,menu) && menu && memory.read(menu+0x94,loaded) && loaded==1 &&
+        memory.read(menu+0x96,fading) && fading==0 && memory.read(current.data+0x138,hp) && hp>0 &&
+        memory.read(current.physics+0x1D6,gravity) && gravity<=1 &&
+        memory.read(current.physics+0x70,position) && flightPosition(position,{},state.flightSpeed,0).has_value() &&
+        memory.read(current.modules+0x70,fall) && fall && memory.read(fall+0x18,timer) &&
+        std::isfinite(timer) && timer>=0.f && timer<100000.f;
+}
 struct AttributeStore {
     bool valid(){
         uintptr_t menu{};uint8_t loaded{},fading{};int hp{};
@@ -100,7 +123,7 @@ std::string fingerprint(const std::filesystem::path& path) {
 }
 bool clearOverrides(bool sameEntity=true) {
     horseJump::stop();
-    bool restored=true;
+    bool restored=stopFlight();
     for(auto& o:overrides) restored=o.restore(memory,0) && restored;
     restored=noDamage.restore(memory,sameEntity?generation:UINT64_MAX) && restored;
     uintptr_t flipper{};
@@ -133,6 +156,7 @@ void sampleTargets(){
     }
 }
 void execute(Command& c){
+    if(c.action==Action::Flight && !c.enabled){state.status=stopFlight()?"Flying stopped; original gravity restored.":"Flying stopped, but gravity ownership changed; restoration could not be verified.";log(state.status);return;}
     if(c.action==Action::TorrentJump && !c.enabled){horseJump::stop();state.torrentJump=false;state.status="Torrent jumps returned to normal.";return;}
     if(c.action==Action::DisableAll){bool restored=clearOverrides(stillCurrent());state.status=restored?"Temporary modifiers stopped. Persistent grants are not undone.":"Restoration incomplete: an owned value changed; see log. Persistent grants are not undone.";log(state.status);return;}
     auto reason=rejection(state,c);if(!reason.empty()){state.status=reason;log("Rejected: "+reason);return;}
@@ -141,6 +165,12 @@ void execute(Command& c){
     if(!stillCurrent()){clearOverrides(false);state.status="Character changed before execution; action discarded and modifiers stopped.";return;}
     bool ok=true;
     switch(c.action){
+    case Action::Flight:{
+        std::array<float,3> position{};uintptr_t fall{};
+        ok=flightData(position,fall) && noGravity.set(memory,current.physics+0x1D6,1,generation);
+        if(ok){state.flying=true;lastFlightTick=GetTickCount64();}break;
+    }
+    case Action::FlightSpeed:state.flightSpeed=static_cast<float>(c.value);break;
     case Action::EditAttributes:{
         AttributeState target;
         if(!planAttributes(c.attributes,target).empty() || !auditAttributes("requested",c.attributes,target)){
@@ -195,6 +225,7 @@ void execute(Command& c){
         state.status="Item action: "+std::string(item->name)+"; before "+std::to_string(before)+", observed after "+std::to_string(after)+". Persistent; no retry.";log(state.status);return;
     }
     case Action::ApplyProfile:
+        if(!stopFlight()){ok=false;break;}
         horseJump::stop();state.torrentJump=false;
         for(size_t i=0;i<4;++i)if(!setModifier(i,c.profile.modifiers[i])){ok=false;break;}
         if(ok){state.statusMask=state.statusValid?c.profile.statusMask:0;ok=setSpeed(c.profile.speed);}break;
@@ -238,7 +269,7 @@ void initialize() {
     state.torrentJumpAvailable=recognized && horseJump::initialize(base,sha);
     entryPoints=recognized && matchEntry(spawnRva,itemSpawnHeader) && matchEntry(quantityRva,itemQuantityHeader) && matchEntry(runeRva,giveRunesHeader);
     state.status=recognized?"Build matched. Experimental controls start disarmed.":"Unknown executable: gameplay reads and writes disabled.";
-    log("0.2.5 beta loaded. Executable SHA256: "+sha); log(state.status);
+    log("0.2.6 beta loaded. Executable SHA256: "+sha); log(state.status);
     auto config=dataDir()/"settings.txt";
     if(std::filesystem::exists(config)) {
         std::ifstream file(config); std::string text((std::istreambuf_iterator<char>(file)),{});
@@ -266,7 +297,7 @@ void poll() {
         current=valid?next:Context{};cachedQuantity=-1;lastQuantityTick=0;
     }else current=next;
     state.generation=generation;state.handle=current.handle;state.map=current.map;
-    state.ready=false;state.playerPresent=false;state.positionValid=false;state.statusValid=false;state.statsValid=false;state.speedValid=false;state.attributesEditable=false;
+    state.ready=false;state.playerPresent=false;state.positionValid=false;state.statusValid=false;state.statsValid=false;state.speedValid=false;state.attributesEditable=false;state.flightAvailable=false;
     state.adapterReady=recognized;state.itemApi=entryPoints;state.session=Session::Unknown;
     state.current.fill(0);state.maximum.fill(0);state.targets.clear();state.riding=true;
     state.selectedItem=selectedItem;state.ownedQuantity=-1;
@@ -300,6 +331,7 @@ void poll() {
         if(state.ready)sampleTargets();
     }
     if(!state.ready){clearOverrides(recognized && stillCurrent());if(wasReady){++generation;state.generation=generation;}}
+    {std::array<float,3> position{};uintptr_t fall{};state.flightAvailable=flightData(position,fall);}
     if(state.dataStatus!=lastDataStatus){log("Player reader: "+state.dataStatus);lastDataStatus=state.dataStatus;}
     // Mode is a user declaration, never a claim of automatic session detection.
     // Native calls below are experimental worker dispatch, not a verified game task hook.
@@ -308,6 +340,21 @@ void poll() {
         state.ownedQuantity=cachedQuantity;
     }else{cachedQuantity=-1;lastQuantityTick=0;}
     while(!commands.empty()){auto command=commands.front();commands.pop_front();execute(command);}
+    if(state.flying){
+        std::array<float,3> position{},axes{};uintptr_t fall{},freshFall{};uint8_t gravity{};
+        bool ok=state.offlineDeclared && state.session!=Session::Online && flightData(position,fall) &&
+            memory.read(current.physics+0x1D6,gravity) && gravity==1 && noGravity.owned;
+        auto now=GetTickCount64();double elapsed=lastFlightTick?double(now-lastFlightTick)/1000.:0.;lastFlightTick=now;
+        if(!menuOpen.load() && input::gameplayFocused()){
+            auto down=[](int key){return (GetAsyncKeyState(key)&0x8000)?1.f:0.f;};
+            axes={down('L')-down('J'),down(VK_PRIOR)-down(VK_NEXT),down('I')-down('K')};
+        }
+        auto target=flightPosition(position,axes,state.flightSpeed,elapsed);
+        // Timer suppression is transient, like clearing buildup; no stale timer is restored.
+        ok=ok && target.has_value() && stillCurrent() && memory.read(current.modules+0x70,freshFall) && freshFall==fall && memory.write(fall+0x18,0.f);
+        if(ok && (axes[0]!=0 || axes[1]!=0 || axes[2]!=0))ok=stillCurrent() && memory.write(current.physics+0x70,*target);
+        if(!ok){bool restored=stopFlight();state.status=restored?"Flying stopped: character, mount or flight data changed.":"Flying stopped; original gravity could not be restored safely.";log(state.status);}
+    }
     if(state.torrentJump){
         uintptr_t ride{},owner{},node{};int mounted{};
         bool validRide=state.ready && state.offlineDeclared && state.session!=Session::Online && state.riding && stillCurrent() &&

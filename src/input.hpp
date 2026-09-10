@@ -5,4 +5,5 @@ bool install();
 void update(HWND window, bool menuVisible);
 void release();
 bool ownsFocus();
+bool gameplayFocused();
 }

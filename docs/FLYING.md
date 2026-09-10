@@ -1,0 +1,19 @@
+# Flying - 0.2.6 beta
+
+Player > Flying adds an on-foot toggle and 0.5-10 m/s speed control. Close the menu to move with I/K (positive/negative Z), J/L (negative/positive X), and Page Up/Down (positive/negative Y). Horizontal directions are world-fixed, not camera-relative. Input is read only while the game window is foreground and the menu is closed. This is a keyboard feature; no controller binding is added.
+
+The implementation uses already pinned MIT TarnishedTool source: `provenance/Offsets.cs` and `Offsets-2.7.1.cs` define ChrPhysics coordinates at +0x70 and NoGravity at +0x1D6; `ChrInsService.cs` demonstrates writing NoGravity as a boolean. `Resources.resx` NoClip_InAirTimer identifies the local player's modules+0x70 pointer and the float timer at +0x18. Both supported executable hashes retain the existing player/module profiles. No new executable patch, engine function call, arbitrary offset, or upstream trainer assembly is installed for flight.
+
+On enable, live character/loading/health, mount, finite coordinate/timer and gravity-byte checks precede the owned NoGravity write. The existing 64 ms worker clears the transient in-air timer and updates coordinates when a flight key is held. Diagonal movement is normalized and elapsed time capped at 100 ms, preventing a long stall from producing a large catch-up movement. Input/position/speed values are bounded and finite. Coordinates are sampled again each tick; no stale absolute flight target is held across character transitions.
+
+Stopping restores the original gravity byte only if the current player handle and physics pointer still match the owned target and its byte still equals the applied value. Missing or competing ownership reports incomplete restoration instead of writing a stale object. The elapsed timer is not restored. Flight stops on invalid data, mounting, loading/death/identity changes, offline declaration removal, Disable All, profile application and completed attribute edits. Explicit stop is accepted with unavailable player data and takes priority over queued flight enables. Bookmark return is blocked during flight. Flight is never stored in profiles.
+
+This does not add collision hooks, ground detection, cutscene detection, automatic landing, fall immunity or death-zone protection. Coordinate movement can interact poorly with geometry; stay in open space and descend near stable ground before disabling. Menu/focus loss pauses input rather than dropping the character by immediately restoring gravity. Existing worker dispatch still has memory races; exact hashes and source provenance are not proof of live behavior.
+
+## Component validation
+
+Twenty-four new core checks cover enable gates, mount/online/offline/stale-generation rejection, stop availability and queue priority, temporary reset, speed validation, movement axes, diagonal normalization, elapsed-time clamping, no-input behavior and invalid/out-of-range coordinates. The source test suite exercises the shared owned-value restoration code. These do not simulate game physics or prove hovering/collision/landing behavior. No game or graphics host is launched by this workflow.
+
+The complete component run passes 249 checks: 148 core/input/catalog/ownership/flight, 23 storage, 36 attributes, 22 native Torrent hooks and 20 launch-layout checks. The game DLL is version 0.2.6; the prior 0.2.5 results in TEST_RESULTS.md remain historical. Installation uses the existing schema-2 updater so the Steam folder remains clear.
+
+In-game checks for the user: enable while standing in open terrain; rise a little, move in each horizontal direction, descend, and disable near the ground. Check menu open/close, Alt+Tab, speed changes, Disable All and remount/loading resets. Confirm normal gravity after stopping. Report any drift, failed restoration or geometry behavior with the exact game version and toolkit log.

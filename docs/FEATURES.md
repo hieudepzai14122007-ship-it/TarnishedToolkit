@@ -1,9 +1,10 @@
-# Feature delivery status — 0.2.5 beta
+# Feature delivery status — 0.2.6 beta
 
 **Implemented** means working code exists, not that its gameplay effect has been live tested. This update was built and tested without launching the game or renderer. All new gameplay adapters are experimental.
 
 | Area | Implemented | Remaining integration |
 | --- | --- | --- |
+| Flying | On-foot gravity suppression and keyboard coordinate movement, fixed horizontal directions, Page Up/Down vertical movement, 0.5-10 m/s speed, local in-air timer clearing; identity/ownership-checked gravity restoration and transition reset | In-game validation, camera-relative/controller input, terrain/cutscene detection, collision/noclip integration, landing and death-zone protection |
 | Launch separation | Schema-2 installation under sibling OfflineGame; Steam proxies and old mod files preserved outside Game; desktop offline shortcut; copied code, shared large assets refreshed before offline launches; update/removal preserve separation | User verification of Steam and offline launch; separate character saves are not implemented |
 | Mouse/input | Recenter/confinement hooks; Win32, Raw Input, standard DirectInput and XInput capture; focus-loss release; controller-state clearing; modal cancel; LB/RB categories; configurable 0.65-second hold opening chord | Live fullscreen/borderless, Alt+Tab and controller checks; other input implementations; game-binding collision detection and emergency remapping |
 | Home | Overview, active flags, individual disable, Disable All, category favorites, search, profiles with preview/apply | Feature-level rather than category favorites; full feature metadata registry |

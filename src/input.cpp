@@ -61,6 +61,7 @@ bool hook(void* address,void* replacement,void** original){
 }
 }
 bool ownsFocus(){return captured.load(std::memory_order_relaxed) && foreground();}
+bool gameplayFocused(){return foreground();}
 void update(HWND window,bool menu){
     std::lock_guard lock(policyMutex);gameWindow=window;
     bool focused=foreground();auto transition=policy.update(menu,focused);

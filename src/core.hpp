@@ -14,13 +14,14 @@
 
 namespace tt {
 enum class Session { Unknown, Offline, Online };
-enum class Action { Refill, Health, Focus, Stamina, DisableAll, ArmOffline, NoDamage, ClearStatus, SuppressStatus, SimulationSpeed, ReturnBookmark, AddRunes, GrantItem, InspectTarget, ApplyProfile, EditAttributes, TorrentJump };
+enum class Action { Refill, Health, Focus, Stamina, DisableAll, ArmOffline, NoDamage, ClearStatus, SuppressStatus, SimulationSpeed, ReturnBookmark, AddRunes, GrantItem, InspectTarget, ApplyProfile, EditAttributes, TorrentJump, Flight, FlightSpeed };
 struct Target {uint64_t handle{};int id{},hp{},maxHp{};float poise{},maxPoise{};bool poiseValid{};};
 struct Profile {std::string name{"Custom"};std::array<bool,4> modifiers{};uint8_t statusMask{};float speed{1.f};};
 struct Bookmark {std::string name;uint64_t generation{},handle{};uint32_t map{};std::array<float,3> position{};float angle{};};
 struct Snapshot {
     bool fingerprint{}, ready{}, adapterReady{}, offlineDeclared{}, playerPresent{};
     bool torrentJump{},torrentJumpAvailable{};
+    bool flying{},flightAvailable{};float flightSpeed{3.f};
     Session session{Session::Unknown};
     uint64_t generation{};
     std::array<int,3> current{}, maximum{};
@@ -49,7 +50,7 @@ struct Command {
 // Offline declaration belongs to this process, while modifiers belong to the
 // loaded character. Transitions and failures clear effects without erasing consent.
 inline void resetTemporaryState(Snapshot& s){
-    s.active.fill(false);s.statusMask=0;s.speedActive=false;s.torrentJump=false;
+    s.active.fill(false);s.statusMask=0;s.speedActive=false;s.torrentJump=false;s.flying=false;
 }
 // Called under the runtime state mutex. Session intent is acknowledged now,
 // independently of the 64 ms worker and character generation. Only restoration
@@ -64,13 +65,17 @@ inline void queueCommand(Snapshot& s,std::deque<Command>& queue,Command c){
     if(c.action==Action::DisableAll){
         s.offlineDeclared=false;queue.clear();queue.push_front(c);return;
     }
+    if(c.action==Action::Flight && !c.enabled){
+        std::erase_if(queue,[](const Command& pending){return pending.action==Action::Flight;});
+        queue.push_front(c);return;
+    }
     if(queue.size()<32)queue.push_back(c);
 }
 inline bool validProfile(const Profile& p){return !p.name.empty() && p.name.size()<=48 && p.name.find_first_of("\r\n") == std::string::npos && p.statusMask<128 && std::isfinite(p.speed) && p.speed>=.25f && p.speed<=1.5f;}
 inline std::string rejection(const Snapshot& s, const Command& c) {
-    if (c.action == Action::DisableAll || (c.action==Action::TorrentJump && !c.enabled)) return {};
+    if (c.action == Action::DisableAll || ((c.action==Action::TorrentJump || c.action==Action::Flight) && !c.enabled)) return {};
     if (c.action == Action::ArmOffline) return {}; // Declaration only; no game access.
-    if (c.action < Action::Refill || c.action > Action::TorrentJump) return "Unknown command.";
+    if (c.action < Action::Refill || c.action > Action::FlightSpeed) return "Unknown command.";
     if (!s.fingerprint) return "Executable fingerprint is not supported.";
     if(s.session==Session::Online)return "Online sessions are not supported.";
     if(c.action==Action::InspectTarget)return {};
@@ -79,6 +84,8 @@ inline std::string rejection(const Snapshot& s, const Command& c) {
     if (!s.ready) return "A living, fully loaded character is required.";
     if (s.generation != c.generation) return "Character or map changed; command discarded.";
     if(c.action==Action::TorrentJump && (!s.torrentJumpAvailable || !s.riding))return "Mount Torrent first. Repeated jumps require the supported 2.7.1.0 adapter.";
+    if((c.action==Action::Flight || c.action==Action::FlightSpeed) && (!s.flightAvailable || s.riding))return "Dismount and load a supported character with readable flight data first.";
+    if(c.action==Action::FlightSpeed && (!std::isfinite(c.value) || c.value<.5 || c.value>10))return "Flying speed must be between 0.5 and 10 metres per second.";
     if(c.action==Action::EditAttributes){
         if(!s.attributesEditable || !s.statsValid)return "Character attribute editing is unavailable.";
         if(!c.confirmed)return "Preview and confirm the persistent attribute changes first.";
@@ -91,6 +98,7 @@ inline std::string rejection(const Snapshot& s, const Command& c) {
     if(c.action==Action::AddRunes && (!c.confirmed || !s.statsValid || !std::isfinite(c.value) || c.value<1 || c.value>1000000 || std::floor(c.value)!=c.value || c.expectedBefore!=s.runes || c.value>999999999-s.runes))return "Rune preview is stale or invalid. Preview again (1 to 1,000,000 per action).";
     if(c.action==Action::GrantItem && (!c.confirmed || !s.itemApi || c.item!=s.selectedItem || c.expectedBefore<0 || c.expectedBefore!=s.ownedQuantity))return "Item preview is stale or unavailable. Preview again.";
     if(c.action==Action::ReturnBookmark){
+        if(s.flying)return "Stop flying before returning to a bookmark.";
         auto& b=c.bookmark;
         if(!s.positionValid || s.riding || b.generation!=s.generation || b.handle!=s.handle || b.map!=s.map)return "Bookmark must belong to this character, session and loaded map; dismount first.";
         float distance{};for(int i=0;i<3;++i){if(!std::isfinite(b.position[i]))return "Invalid bookmark coordinates.";float d=b.position[i]-s.position[i];distance+=d*d;}

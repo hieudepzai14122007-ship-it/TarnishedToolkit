@@ -6,7 +6,7 @@ import hashlib
 root = Path(__file__).resolve().parent
 output = root / 'dist'
 output.mkdir(exist_ok=True)
-archive = output / 'TarnishedToolkit-0.2.5-separated-launches.zip'
+archive = output / 'TarnishedToolkit-0.2.6-flying.zip'
 folders = ('src', 'tests', 'vendor', 'docs', 'licenses', 'provenance')
 files = ['README.md', 'LICENSE.txt', 'THIRD_PARTY_NOTICES.md', 'CMakeLists.txt',
          'Build.ps1', 'Install.ps1', 'Update.ps1', 'Uninstall.ps1', 'Package.py',

@@ -2,6 +2,7 @@
 #include "input_policy.hpp"
 #include "catalog.hpp"
 #include "storage.hpp"
+#include "flight.hpp"
 #include <limits>
 #include <set>
 #include <iostream>
@@ -154,5 +155,31 @@ int main(){
  hold.update(false,true,3000);hold.update(true,true,3100);hold.update(true,false,3750);
  check(!hold.update(true,true,4000) && !hold.update(true,true,4500),"focus loss cancels accumulated hold time");
  check(hold.update(true,true,4650),"fresh foreground hold works");
+ Snapshot fl;fl.fingerprint=true;fl.ready=true;fl.adapterReady=true;fl.offlineDeclared=true;fl.generation=4;fl.current={10,10,10};fl.maximum={10,10,10};
+ Command fly{Action::Flight,4,true};
+ check(!rejection(fl,fly).empty(),"unreadable flight data blocks enable");fl.flightAvailable=true;
+ check(rejection(fl,fly).empty(),"loaded supported on-foot flight accepted");
+ fl.riding=true;check(!rejection(fl,fly).empty(),"mounted flight rejected");fl.riding=false;
+ fl.offlineDeclared=false;check(!rejection(fl,fly).empty(),"flight requires offline declaration");fl.offlineDeclared=true;
+ fl.session=Session::Online;check(!rejection(fl,fly).empty(),"online flight rejected");fl.session=Session::Unknown;
+ fly.generation=3;check(!rejection(fl,fly).empty(),"stale flight command rejected");fly.generation=4;
+ check(rejection(Snapshot{},{Action::Flight,999,false}).empty(),"flight stop always allowed");
+ Command fs{Action::FlightSpeed,4};fs.value=3;check(rejection(fl,fs).empty(),"valid flight speed accepted");
+ fs.value=11;check(!rejection(fl,fs).empty(),"excessive flight speed rejected");fs.value=std::numeric_limits<double>::quiet_NaN();check(!rejection(fl,fs).empty(),"nonfinite flight speed rejected");
+ fl.flying=true;resetTemporaryState(fl);check(!fl.flying && fl.offlineDeclared,"flight resets without erasing declaration");
+ std::deque<Command> flights;for(int i=0;i<32;++i)flights.push_back(fly);
+ queueCommand(fl,flights,{Action::Flight,0,false});check(flights.size()==1 && !flights.front().enabled,"stop replaces queued flight enables even with full queue");
+ auto fp=flightPosition({10,20,30},{1,0,0},3,.064);check(fp && std::abs((*fp)[0]-10.192f)<.0001f && (*fp)[1]==20 && (*fp)[2]==30,"horizontal movement uses elapsed seconds");
+ fp=flightPosition({0,0,0},{0,1,0},3,.1);check(fp && std::abs((*fp)[1]-.3f)<.0001f,"rise uses vertical axis");
+ fp=flightPosition({0,0,0},{0,-1,0},3,.1);check(fp && (*fp)[1]<0,"descent moves downward");
+ fp=flightPosition({0,0,0},{1,1,1},3,.1);check(fp && std::abs(std::sqrt((*fp)[0]*(*fp)[0]+(*fp)[1]*(*fp)[1]+(*fp)[2]*(*fp)[2])-.3f)<.0001f,"diagonals do not increase flight speed");
+ fp=flightPosition({0,0,0},{1,0,0},10,10);check(fp && (*fp)[0]==1,"long stall cannot cause large teleport");
+ fp=flightPosition({1,2,3},{},3,.064);check(fp && *fp==std::array<float,3>{1,2,3},"no input keeps target unchanged");
+ check(!flightPosition({0,0,0},{},3,-1),"negative elapsed rejected");
+ check(!flightPosition({0,0,0},{},3,std::numeric_limits<double>::infinity()),"infinite elapsed rejected");
+ check(!flightPosition({0,0,0},{2,0,0},3,.064),"invalid input axis rejected");
+ check(!flightPosition({std::numeric_limits<float>::quiet_NaN(),0,0},{},3,.064),"nonfinite coordinates rejected");
+ check(!flightPosition({1000000,0,0},{1,0,0},10,.1),"coordinate bounds checked after movement");
+ check(!flightPosition({0,0,0},{},.4f,.064),"too-slow invalid flight speed rejected");
  std::cout<<"All "<<checks<<" validation and ownership checks passed.\n";
 }
