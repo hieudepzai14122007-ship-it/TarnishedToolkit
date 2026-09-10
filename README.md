@@ -2,6 +2,89 @@
 
 An in-game DirectX 12 menu for the fingerprinted Elden Ring 2.7.0.0 and 2.7.1.0 installations. This update implements the cursor recenter/confinement fix and adds experimental trainer and planning tools. **The new input and gameplay changes have not been tested in-game.** The game and renderer host were not launched for this update.
 
+## Download and first-time setup
+
+### 1. Download the compiled mod
+
+1. Open the [0.2.5 beta release](https://github.com/hieudepzai14122007-ship-it/TarnishedToolkit/releases/tag/v0.2.5-beta).
+2. Expand **Assets** and download **TarnishedToolkit-0.2.5-separated-launches.zip**. The automatic **Source code** downloads do not contain the compiled DLL.
+3. Right-click the downloaded ZIP, choose **Extract All**, and keep the complete `TarnishedToolkit` folder. The mod is `TarnishedToolkit/build/TarnishedToolkit.dll`; you do not need to compile it yourself.
+
+### 2. Check requirements and back up your save
+
+- Windows 64-bit and your own Steam copy of Elden Ring are required. Gameplay controls recognize only the exact supported 2.7.0.0 and 2.7.1.0 executable hashes, not every game version. Infinite Torrent jumps require the supported 2.7.1.0 build.
+- **This beta's automatic installer targets an existing, specific loader setup.** It expects the inspected Elden Mod Loader `dinput8.dll` and its `mod_loader_config.ini` in `Game/`. The separation step also expects the inspected EAC Toggler `winhttp.dll` and valid signed game/Steam/EAC files. Those external tools are not included. Their project pages are [Elden Mod Loader](https://github.com/techiew/EldenRingModLoader) and [EAC Toggler](https://github.com/techiew/EldenRingEacToggler). A newer/different loader may be rejected.
+- If you have a clean game installation or another mod manager, this release does not provide a universal installer for it. Do not place random proxy DLLs beside the game or bypass a failed installer check. Include the exact message in a [GitHub issue](https://github.com/hieudepzai14122007-ship-it/TarnishedToolkit/issues) for setup support.
+- Close the game and finish Steam Cloud synchronization. Press **Win+R**, enter `%APPDATA%\EldenRing`, and copy your account's save folder to a separate backup location. Keep that backup before changing attributes, items or runes.
+
+### 3. Install into the supported loader setup
+
+Skip this section if this toolkit is already installed; use the update instructions below instead.
+
+1. In Steam, right-click **Elden Ring > Manage > Browse local files**. This opens the `ELDEN RING` folder containing `Game`.
+2. Place the extracted `TarnishedToolkit` folder beside `Game`, so the layout is:
+
+   ```text
+   ELDEN RING/
+     Game/
+       eldenring.exe
+     TarnishedToolkit/
+       Install.ps1
+       build/
+         TarnishedToolkit.dll
+   ```
+
+3. Open the `TarnishedToolkit` folder in File Explorer. Type `powershell` into its address bar and press Enter.
+4. Run these commands **one at a time**. Stop if any command reports an error; do not continue with the next step.
+
+   ```powershell
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\Install.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\SeparateLaunches.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\CreateLaunchShortcuts.ps1
+   powershell -NoProfile -ExecutionPolicy Bypass -File .\LaunchOffline.ps1 -CheckOnly
+   ```
+
+   These commands do not launch the game. The execution-policy option applies to each command's process, not your permanent Windows policy. If Windows reports access denied for the Steam folder, reopen PowerShell as administrator, navigate to the same folder, and retry the failed step.
+
+Successful separation creates a sibling `OfflineGame` folder and a desktop **Elden Ring - Offline Mods** shortcut. Keep the toolkit folder in place: its installation record and shortcut are used for future updates. See [launch separation](docs/LAUNCH_SEPARATION.md) for what is copied and backed up.
+
+### 4. Launch and open the menu
+
+1. Keep Steam running. Close any other Elden Ring session.
+2. Double-click **Elden Ring - Offline Mods** on your desktop. The first file check/refresh can take a few seconds. Use **Play in Steam** when you want the normal game without the menu.
+3. Load a character in offline single-player, then press **Insert** to open the menu. Some compact keyboards require **Fn+Insert**.
+4. On **Home**, select **I am playing offline - enable experimental controls** only when you are playing offline. This checkbox is your declaration; it does not detect or switch the game's network mode.
+5. Press **Insert** again to close the menu and resume normal mouse input. The menu does not pause gameplay.
+
+**Both launch paths still share character saves.** Steam launch does not undo modified attributes, granted items or runes. Disable All stops temporary modifiers; it does not undo persistent edits.
+
+### 5. Try a feature
+
+| What you want | Where to go and what to do |
+| --- | --- |
+| Edit stats | **Player > Character attributes - edit**. Enter values, select **Preview attribute changes**, then **Apply attributes once**. Reload the character before checking derived stats. |
+| Get a weapon | **Items & Builds**, set **Type: Weapons**, select a base-game weapon, choose **Preview persistent item grant**, then **Apply once**. This grants one default +0 copy; DLC grants are unavailable. Maxing your stats is not required. |
+| Jump repeatedly on Torrent | Mount Torrent, open **Player > Torrent**, enable **Infinite Torrent double jumps**, close the menu, and press jump again in the air. The toggle stops on dismount/loading. Fall damage is unchanged. |
+| Stop temporary effects | Choose **Disable All** or press **Ctrl+Shift+Backspace**. |
+
+### Update or uninstall
+
+- **Update:** close the game, download/extract the new release, and copy its `build/TarnishedToolkit.dll` into the **existing** toolkit folder's `build` directory. Keep `installation.json`, backups and the folder location. From that existing folder, run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Update.ps1`. Follow any additional migration steps specified by the newer release; do not rerun first-time installation.
+- **Uninstall:** close the game, open PowerShell in the installed toolkit folder, and run `powershell -NoProfile -ExecutionPolicy Bypass -File .\Uninstall.ps1`. For the separated installation this removes the offline toolkit, leaves Steam clear, preserves backups/assets, and makes the shortcut inactive. It does not reverse save edits.
+
+### Troubleshooting
+
+| Problem | What to check |
+| --- | --- |
+| No menu when using Steam Play | That is expected after separation. Use the **Offline Mods** desktop shortcut. |
+| Installer says loader missing/unrecognized | Check the prerequisites above. The scripts support specific external loader files, not all mod managers. Keep the exact error message. |
+| Installer says an installation already exists | Use **Update.ps1** from the original toolkit folder. Do not delete its installation record to force a reinstall. |
+| Failed to receive player data / controls unavailable | Load a living character and read the detailed reason on **Home**. An unsupported executable hash requires a compatible toolkit update; repeated restarts or checking offline mode cannot fix a version mismatch. |
+| Offline checkbox is selected but actions are unavailable | Offline declaration is only one requirement. The character must be loaded and the executable/feature supported. |
+| Weapon grant unavailable | Select an eligible base-game weapon and review the message; DLC/unclassified entries are blocked. |
+| Steam reports 0xc000007b or an EAC launch error | Do not use the old toggler to switch modes after separation. Verify Steam's installed game files if normal launch still fails. The error may have causes beyond the mod layout. |
+| Shortcut fails or menu still does not appear | Run **LaunchOffline.ps1 -CheckOnly** from the installed toolkit folder and inspect `%LOCALAPPDATA%\TarnishedToolkit\toolkit.log`. When reporting an issue, include the exact error and game version, and remove personal paths from logs. |
+
 ## Infinite Torrent jumps
 
 **Launch update:** Use Play in Steam for the normal game, or the desktop **Elden Ring - Offline Mods** shortcut for the menu (with Steam running). The menu now lives in the sibling `OfflineGame/` folder. Character saves are still shared, including persistent item/stat changes. See [launch separation](docs/LAUNCH_SEPARATION.md) for maintenance and measured checks. Neither launch was tested in-game here.
