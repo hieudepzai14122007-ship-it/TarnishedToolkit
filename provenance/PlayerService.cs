@@ -1,0 +1,694 @@
+using System;
+using System.Collections.Generic;
+using System.Globalization;
+using System.Linq;
+using System.Numerics;
+using System.Threading.Tasks;
+using TarnishedTool.Enums;
+using TarnishedTool.GameIds;
+using TarnishedTool.Interfaces;
+using TarnishedTool.Memory;
+using TarnishedTool.Models;
+using TarnishedTool.Utilities;
+using static TarnishedTool.Memory.Offsets;
+
+namespace TarnishedTool.Services
+{
+    public class PlayerService(
+        IMemoryService memoryService,
+        HookManager hookManager,
+        ITravelService travelService,
+        IReminderService reminderService,
+        IParamService paramService,
+        IChrInsService chrInsService,
+        IActionRequestService actionRequestService) : IPlayerService
+    {
+        private const float LongDistanceRestore = 500f;
+
+        private const float InitialLevelUpCost = 0.1f;
+        private const float InitialLevelUpOffset = 1f;
+        private const float LevelUpCostIncrease = 0.02f;
+        private const float LevelUpIncreaseInterval = 92f;
+        private const int BaseLevelOffset = 80;
+
+        private const int StatsBlockSize = 0x20;
+
+        private readonly Position[] _positions =
+        [
+            new(0, Vector3.Zero, 0f),
+            new(0, Vector3.Zero, 0f)
+        ];
+
+        private SpeedBuffMode _currentMode = SpeedBuffMode.Off;
+        
+        private static readonly byte[] BuffPrefixTable = BuildBuffPrefixTable();
+        
+        private static byte[] BuildBuffPrefixTable()
+        {
+            var table = new byte[1024];
+
+            foreach (int id in DataLoader.GetSimpleList(
+                         "TimeActIds",
+                         s => int.Parse(s, CultureInfo.InvariantCulture)))
+            {
+                table[id] = 1;
+            }
+
+            return table;
+        }
+
+        
+        public MapLocation GetMapLocation()
+        {
+            var playerIns = GetPlayerIns();
+
+            var blockId = memoryService.Read<uint>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentBlockId);
+            var mapCoords = memoryService.Read<Vector3>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentMapCoords);
+            var angle = memoryService.Read<float>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentMapAngle);
+            var localCoords = memoryService.Read<Vector3>(GetChrPhysicsPtr() + (int)ChrIns.ChrPhysicsOffsets.Coords);
+
+            return new MapLocation(blockId, localCoords, mapCoords, angle);
+        }
+
+        public Vector3 GetPlayerPos() => chrInsService.GetLocalCoords(GetPlayerIns());
+        public void SetPlayerPos(Vector3 pos) => chrInsService.SetLocalCoords(GetPlayerIns(), pos);
+        public Vector3 GetTorrentPos() => chrInsService.GetLocalCoords(GetTorrentChrIns());
+        public void SetTorrentPos(Vector3 pos) => chrInsService.SetLocalCoords(GetTorrentChrIns(), pos);
+
+        public void SavePos(int index)
+        {
+            var posToSave = _positions[index];
+            var playerIns = GetPlayerIns();
+            posToSave.BlockId = memoryService.Read<uint>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentBlockId);
+            posToSave.Coords =
+                memoryService.Read<Vector3>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentMapCoords);
+            posToSave.Angle =
+                memoryService.Read<float>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentMapAngle);
+        }
+
+        public void RestorePos(int index)
+        {
+            var savedPos = _positions[index];
+            var currentPos = GetPlayerPosition();
+
+            uint currentArea = (currentPos.BlockId >> 24) & 0xFF;
+            uint savedArea = (savedPos.BlockId >> 24) & 0xFF;
+
+            if (currentArea == savedArea)
+            {
+                var currentAbsolute = PositionUtils.ToAbsolute(currentPos.Coords, currentPos.BlockId);
+                var savedAbsolute = PositionUtils.ToAbsolute(savedPos.Coords, savedPos.BlockId);
+                var delta = savedAbsolute - currentAbsolute;
+
+                var chrRideModule = GetChrRidePtr();
+                var isRiding = IsRidingInternal(chrRideModule);
+                var physicsPtr = isRiding ? GetTorrentPhysicsPtr() : GetChrPhysicsPtr();
+                var coordsPtr = physicsPtr + (int)ChrIns.ChrPhysicsOffsets.Coords;
+                var isLongDistance = delta.Length() > LongDistanceRestore;
+
+                if (isLongDistance)
+                    memoryService.Write(physicsPtr + (int)ChrIns.ChrPhysicsOffsets.NoGravity, true);
+
+                memoryService.Write(coordsPtr, memoryService.Read<Vector3>(coordsPtr) + delta);
+                memoryService.Write(GetPlayerIns() + WorldChrMan.PlayerInsOffsets.CurrentMapAngle,
+                    savedPos.Angle);
+
+                if (isLongDistance)
+                {
+                    _ = Task.Run(async () =>
+                    {
+                        await Task.Delay(1000);
+                        memoryService.Write(physicsPtr + (int)ChrIns.ChrPhysicsOffsets.NoGravity, false);
+                    });
+                }
+            }
+
+            else
+            {
+                _ = Task.Run(() => travelService.WarpToBlockId(savedPos));
+            }
+        }
+
+        public void MoveToPosition(Position targetPosition)
+        {
+            var currentPos = GetPlayerPosition();
+
+            uint currentArea = (currentPos.BlockId >> 24) & 0xFF;
+            uint savedArea = (targetPosition.BlockId >> 24) & 0xFF;
+
+            Vector3 targetAbsolute;
+            if (currentArea == savedArea)
+            {
+                targetAbsolute = PositionUtils.ToAbsolute(targetPosition.Coords, targetPosition.BlockId);
+            }
+            else
+            {
+                targetAbsolute = LegacyConv(targetPosition);
+            }
+
+            var currentAbsolute = PositionUtils.ToAbsolute(currentPos.Coords, currentPos.BlockId);
+            var delta = targetAbsolute - currentAbsolute;
+            var chrRideModule = GetChrRidePtr();
+            var isRiding = IsRidingInternal(chrRideModule);
+            var physicsPtr = isRiding ? GetTorrentPhysicsPtr() : GetChrPhysicsPtr();
+            var coordsPtr = physicsPtr + (int)ChrIns.ChrPhysicsOffsets.Coords;
+
+            var playerIns = GetPlayerIns();
+            var torrentIns = GetTorrentChrIns();
+
+            bool wasPlayerNoDeathEnabled = IsChrDbgFlagEnabled(ChrDbgFlags.PlayerNoDeath);
+            bool wasPlayerNoDamageEnabled = chrInsService.IsNoDamageEnabled(playerIns);
+            bool wasTorrentNoDeathEnabled = chrInsService.IsNoDeathEnabled(torrentIns);
+            bool wasTorrentNoDamageEnabled = chrInsService.IsNoDamageEnabled(torrentIns);
+
+            ToggleDebugFlag(ChrDbgFlags.PlayerNoDeath, true);
+            chrInsService.ToggleNoDamage(playerIns, true);
+            chrInsService.ToggleNoDeath(torrentIns, true);
+            chrInsService.ToggleNoDamage(torrentIns, true);
+
+            memoryService.Write(physicsPtr + (int)ChrIns.ChrPhysicsOffsets.NoGravity, true);
+
+            memoryService.Write(coordsPtr, memoryService.Read<Vector3>(coordsPtr) + delta);
+            memoryService.Write(playerIns + WorldChrMan.PlayerInsOffsets.CurrentMapAngle,
+                targetPosition.Angle);
+
+            _ = Task.Run(async () =>
+            {
+                await Task.Delay(1000);
+                memoryService.Write(physicsPtr + (int)ChrIns.ChrPhysicsOffsets.NoGravity, false);
+            });
+
+            ToggleDebugFlag(ChrDbgFlags.PlayerNoDeath, wasPlayerNoDeathEnabled);
+            chrInsService.ToggleNoDamage(playerIns, wasPlayerNoDamageEnabled);
+            chrInsService.ToggleNoDeath(torrentIns, wasTorrentNoDeathEnabled);
+            chrInsService.ToggleNoDamage(torrentIns, wasTorrentNoDamageEnabled);
+        }
+
+        private bool IsChrDbgFlagEnabled(int offset) => memoryService.Read<byte>(ChrDbgFlags.Base + offset) == 1;
+
+        private Vector3 LegacyConv(Position targetPosition)
+        {
+            var src = new byte[]
+            {
+                (byte)((targetPosition.BlockId >> 24) & 0xFF),
+                (byte)((targetPosition.BlockId >> 16) & 0xFF),
+                (byte)((targetPosition.BlockId >> 8) & 0xFF)
+            };
+
+            (int tableIndex, int slotIndex) = ParamIndices.All["WorldMapLegacyConvParam"];
+            var row = paramService.GetParamRowByMatchingBytes(
+                tableIndex, slotIndex, src, 0x4);
+
+
+            var block = new MemoryBlock(memoryService.ReadBytes(row, 0x24));
+
+            var srcPosX = block.Get<float>(0x08);
+            var srcPosY = block.Get<float>(0x0C);
+            var srcPosZ = block.Get<float>(0x10);
+            var dstGridXNo = block.Get<byte>(0x15);
+            var dstGridZNo = block.Get<byte>(0x16);
+            var dstPosX = block.Get<float>(0x18);
+            var dstPosY = block.Get<float>(0x1C);
+            var dstPosZ = block.Get<float>(0x20);
+
+
+            return new Vector3(
+                targetPosition.Coords.X + (dstPosX - srcPosX) + (dstGridXNo * 256),
+                targetPosition.Coords.Y + (dstPosY - srcPosY),
+                targetPosition.Coords.Z + (dstPosZ - srcPosZ) + (dstGridZNo * 256)
+            );
+        }
+
+        public bool IsRiding() => IsRidingInternal(GetChrRidePtr());
+
+        public void RefreshFromStorage()
+        {
+            var bytes = AsmLoader.GetAsmBytes(AsmScript.RefreshFromStorage);
+            AsmHelper.WriteAbsoluteAddress(bytes, Functions.RefreshFromStorage, 0x4 + 2);
+            memoryService.AllocateAndExecute(bytes);
+        }
+
+        private bool IsRidingInternal(nint chrRideModule)
+        {
+            var rideNode = memoryService.Read<nint>(chrRideModule + (int)ChrIns.ChrRideOffsets.RideNode);
+            return memoryService.Read<int>(rideNode + (int)ChrIns.RideNodeOffsets.IsRiding) != 0;
+        }
+
+        private nint GetTorrentPhysicsPtr()
+        {
+            var torrentChrIns = GetTorrentChrIns();
+            return memoryService.FollowPointers(torrentChrIns, [..ChrIns.ChrPhysicsModule], true, false);
+        }
+
+        private nint GetTorrentChrIns()
+        {
+            var playerGameData =
+                memoryService.Read<nint>(memoryService.Read<nint>(GameDataMan.Base) + GameDataMan.PlayerGameData);
+            var handle =
+                memoryService.Read<int>(playerGameData + GameDataMan.TorrentHandle);
+            return chrInsService.ChrInsByHandle(handle);
+        }
+
+        public nint GetPlayerIns() =>
+            memoryService.Read<nint>(memoryService.Read<nint>(WorldChrMan.Base) + WorldChrMan.PlayerIns);
+
+        public uint GetBlockId() =>
+            memoryService.Read<uint>(GetPlayerIns() + WorldChrMan.PlayerInsOffsets.CurrentBlockId);
+
+        public void SetHp(int hp) => chrInsService.SetHp(GetPlayerIns(), hp);
+        public int GetCurrentHp() => chrInsService.GetCurrentHp(GetPlayerIns());
+        public int GetMaxHp() => chrInsService.GetMaxHp(GetPlayerIns());
+
+        public void SetFullHp()
+        {
+            var playerIns = GetPlayerIns();
+            var full = chrInsService.GetMaxHp(playerIns);
+            chrInsService.SetHp(playerIns, full);
+        }
+        
+        public void SetFullFp()
+        {
+            var full = GetMaxFp();
+            SetFp(full);
+        }
+
+
+        public void SetRfbs()
+        {
+            var playerIns = GetPlayerIns();
+            var full = chrInsService.GetMaxHp(playerIns);
+            chrInsService.SetHp(playerIns, (full * 20) / 100 - 1);
+        }
+
+        public void SetFp(int fp) =>
+            memoryService.Write(GetChrDataPtr() + (int)ChrIns.ChrDataOffsets.Fp, fp);
+
+        public int GetCurrentFp() =>
+            memoryService.Read<int>(GetChrDataPtr() + (int)ChrIns.ChrDataOffsets.Fp);
+
+        public int GetMaxFp() =>
+            memoryService.Read<int>(GetChrDataPtr() + (int)ChrIns.ChrDataOffsets.MaxFp);
+
+        public void SetSp(int sp) =>
+            memoryService.Write(GetChrDataPtr() + (int)ChrIns.ChrDataOffsets.Sp, sp);
+
+        public int GetCurrentSp() =>
+            memoryService.Read<int>(GetChrDataPtr() + (int)ChrIns.ChrDataOffsets.Sp);
+
+        public float GetSpeed() => chrInsService.GetSpeed(GetPlayerIns());
+        public void SetSpeed(float speed) => chrInsService.SetSpeed(GetPlayerIns(), speed);
+
+        public void ToggleInfinitePoise(bool isInfinitePoiseEnabled)
+        {
+            var poiseCode = CodeCaveOffsets.Base + CodeCaveOffsets.InfinitePoise;
+            var noGrabCode = CodeCaveOffsets.Base + CodeCaveOffsets.NoGrab;
+
+            if (isInfinitePoiseEnabled)
+            {
+                HookPoiseDamage(poiseCode);
+                HookGrab(noGrabCode);
+            }
+            else
+            {
+                hookManager.UninstallHook(poiseCode);
+                hookManager.UninstallHook(noGrabCode);
+            }
+        }
+
+        private void HookPoiseDamage(nint code)
+        {
+            var hook = Hooks.InfinitePoise;
+            var bytes = AsmLoader.GetAsmBytes(AsmScript.InfinitePoise);
+
+            var originalBytes = OriginalBytesByPatch.InfinitePoise.GetOriginal();
+            Array.Copy(originalBytes, 0, bytes, 0, originalBytes.Length);
+
+
+            var patchSpecificPlayerIns = WorldChrMan.PlayerIns;
+            AsmHelper.WriteImmediateDwords(bytes, new[]
+            {
+                (patchSpecificPlayerIns, 0xF + 3),
+                (patchSpecificPlayerIns, 0x18 + 3)
+            });
+
+            AsmHelper.WriteRelativeOffsets(bytes, new[]
+            {
+                (code + 0x8, WorldChrMan.Base, 7, 0x8 + 3),
+                (code + 0x3D, WorldChrMan.Base, 7, 0x3D + 3),
+                (code + 0x53, Functions.GetChrInsByEntityId, 5, 0x53 + 1),
+                (code + 0x6A, hook + 0x7, 5, 0x6A + 1)
+            });
+
+            memoryService.WriteBytes(code, bytes);
+
+            hookManager.InstallHook(code, hook, originalBytes);
+        }
+
+        private void HookGrab(nint noGrabCode)
+        {
+            var hook = Hooks.NoGrab;
+            var skipGrabJmpLoc = hook + 0x95;
+            var codeBytes = AsmLoader.GetAsmBytes(AsmScript.NoGrab);
+
+            AsmHelper.WriteImmediateDwords(codeBytes, new[] { (WorldChrMan.PlayerIns, 0x8 + 3) });
+
+            AsmHelper.WriteRelativeOffsets(codeBytes, new[]
+            {
+                (noGrabCode + 0x1, WorldChrMan.Base, 7, 0x1 + 3),
+                (noGrabCode + 0x14, skipGrabJmpLoc, 6, 0x14 + 2),
+                (noGrabCode + 0x23, hook + 0x9, 5, 0x23 + 1)
+            });
+            memoryService.WriteBytes(noGrabCode, codeBytes);
+            hookManager.InstallHook(noGrabCode, hook, new byte[]
+                { 0x41, 0x8B, 0x56, 0x44, 0x48, 0x8D, 0x4C, 0x24, 0x40 });
+        }
+
+        public void ToggleDebugFlag(int offset, bool isEnabled, bool needsReminder = false)
+        {
+            if (needsReminder) reminderService.TrySetReminder();
+            memoryService.Write(ChrDbgFlags.Base + offset, isEnabled);
+        }
+
+        public void ToggleNoDamage(bool isNoDamageEnabled)
+        {
+            reminderService.TrySetReminder();
+            chrInsService.ToggleNoDamage(GetPlayerIns(), isNoDamageEnabled);
+        }
+
+        public void ToggleNoHit(bool isNoHitEnabled)
+        {
+            reminderService.TrySetReminder();
+            memoryService.SetBitValue(GetChrInsFlagsPtr(), (int)ChrIns.ChrInsFlags.NoHit, isNoHitEnabled);
+        }
+
+        public void ToggleLockHp(bool isEnabled)
+        {
+            var playerLockHp = CodeCaveOffsets.Base + CodeCaveOffsets.PlayerLockHp;
+
+            if (isEnabled)
+            {
+                InstallPlayerLockHp(playerLockHp);
+            }
+            else
+            {
+                hookManager.UninstallHook(playerLockHp);
+            }
+        }
+
+        private void InstallPlayerLockHp(nint code)
+        {
+            var bytes = AsmLoader.GetAsmBytes(AsmScript.PlayerLockHp);
+            AsmHelper.WriteRelativeOffsets(bytes, [
+                (code + 0x6, WorldChrMan.Base, 7, 0x6 + 3),
+                (code + 0x36, Hooks.PlayerLockHp + 5, 5, 0x36 + 1)
+            ]);
+
+            memoryService.WriteBytes(code, bytes);
+            hookManager.InstallHook(code, Hooks.PlayerLockHp, [0x48, 0x89, 0x5C, 0x24, 0x18]);
+        }
+
+        public void ToggleNoRuneGain(bool isNoRuneGainEnabled) =>
+            memoryService.WriteBytes(Patches.NoRunesFromEnemies,
+                isNoRuneGainEnabled
+                    ? [0x90, 0x90, 0x90, 0x90, 0x90, 0x90, 0x90]
+                    : OriginalBytesByPatch.NoRunesFromEnemies.GetOriginal());
+
+        public void ToggleNoRuneArcLoss(bool isNoRuneArcLossEnabled) =>
+            memoryService.Write(Patches.NoRuneArcLoss, isNoRuneArcLossEnabled ? (byte)0xEB : (byte)0x74);
+
+        private byte[] _originalRuneBytes;
+
+        public void ToggleNoRuneLoss(bool isNoRuneLossEnabled)
+        {
+            if (isNoRuneLossEnabled)
+            {
+                _originalRuneBytes = memoryService.ReadBytes(Patches.NoRuneLossOnDeath, 6);
+                var bytes = _originalRuneBytes.ToArray();
+                bytes[0] = 0xE9;
+
+                int offset = BitConverter.ToInt32(bytes, 2) + 1;
+                Buffer.BlockCopy(BitConverter.GetBytes(offset), 0, bytes, 1, 4);
+
+                bytes[5] = 0x90;
+                memoryService.WriteBytes(Patches.NoRuneLossOnDeath, bytes);
+            }
+            else if (_originalRuneBytes != null)
+            {
+                memoryService.WriteBytes(Patches.NoRuneLossOnDeath, _originalRuneBytes);
+            }
+        }
+
+        public void ToggleNoTimePassOnDeath(bool isNoTimePassOnDeathEnabled)
+        {
+            var code = CodeCaveOffsets.Base + CodeCaveOffsets.SaveCurrentTime;
+            if (isNoTimePassOnDeathEnabled)
+            {
+                var hook = Hooks.NoTimePassOnDeath;
+                var bytes = AsmLoader.GetAsmBytes(AsmScript.NoTimePassOnDeath);
+                AsmHelper.WriteRelativeOffsets(bytes, new[]
+                {
+                    (code + 0x8, WorldAreaTimeImpl.Base, 7, 0x8 + 3),
+                    (code + 0xF, GameMan.Base, 7, 0xF + 3),
+                    (code + 0x28, hook + 5, 5, 0x28 + 1)
+                });
+
+
+                //Patch specific offsets within GameMan
+                int savedTimeMovIndex1 = 0x19 + 3;
+                int savedTimeMovIndex2 = 0x21 + 3;
+                bytes[savedTimeMovIndex1] = (byte)GameMan.StoredTime;
+                bytes[savedTimeMovIndex2] = (byte)(GameMan.StoredTime + 8);
+
+                memoryService.WriteBytes(code, bytes);
+                hookManager.InstallHook(code, hook, [0x4C, 0x8B, 0x74, 0x24, 0x70]);
+            }
+            else
+            {
+                hookManager.UninstallHook(code);
+            }
+        }
+
+        public void SetNewGame(int value) =>
+            memoryService.Write(memoryService.Read<nint>(GameDataMan.Base) + GameDataMan.NewGame, value);
+
+        public int GetNewGame() =>
+            memoryService.Read<int>(memoryService.Read<nint>(GameDataMan.Base) + GameDataMan.NewGame);
+
+        public void GiveRunes(int runes)
+        {
+            var bytes = AsmLoader.GetAsmBytes(AsmScript.GiveRunes);
+            var playerGameData =
+                memoryService.Read<nint>(memoryService.Read<nint>(GameDataMan.Base) + GameDataMan.PlayerGameData);
+            AsmHelper.WriteAbsoluteAddresses(bytes, new[]
+            {
+                (playerGameData, 0x0 + 2),
+                (runes, 0xA + 2),
+                (Functions.GiveRunes, 0x14 + 2)
+            });
+
+            memoryService.AllocateAndExecute(bytes);
+        }
+
+        public int GetRuneLevel() =>
+            memoryService.Read<int>(GetGameDataPtr() + (int)GameDataMan.PlayerGameDataOffsets.RuneLevel);
+
+        public Stats GetStats()
+        {
+            const int statsStart = (int)GameDataMan.PlayerGameDataOffsets.Vigor;
+            var ptr = GetGameDataPtr() + statsStart;
+            var block = new MemoryBlock(memoryService.ReadBytes(ptr, StatsBlockSize));
+
+            return new Stats
+            {
+                Vigor = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Vigor - statsStart),
+                Mind = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Mind - statsStart),
+                Endurance = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Endurance - statsStart),
+                Strength = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Strength - statsStart),
+                Dexterity = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Dexterity - statsStart),
+                Intelligence = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Intelligence - statsStart),
+                Faith = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Faith - statsStart),
+                Arcane = block.Get<int>((int)GameDataMan.PlayerGameDataOffsets.Arcane - statsStart),
+            };
+        }
+
+        public void SetStat(int offset, int newValue)
+        {
+            var gameData = GetGameDataPtr();
+            var currentStatVal = memoryService.Read<int>(gameData + offset);
+
+            if (currentStatVal == newValue) return;
+
+            var diff = newValue - currentStatVal;
+            var levelPtr = gameData + (int)GameDataMan.PlayerGameDataOffsets.RuneLevel;
+            var currentLevel = memoryService.Read<int>(levelPtr);
+
+            if (newValue > currentStatVal)
+            {
+                long runeCost = 0;
+                for (int i = 1; i <= diff; i++)
+                {
+                    runeCost += CalculateLevelUpCost(currentLevel + i);
+                }
+
+                var runeMemPtr = gameData + (int)GameDataMan.PlayerGameDataOffsets.RuneMemory;
+                var currentRuneMem = memoryService.Read<uint>(runeMemPtr);
+                var newRuneMem = Math.Min(currentRuneMem + (ulong)runeCost, 0xFFFFFFFF);
+                memoryService.Write(runeMemPtr, (uint)newRuneMem);
+            }
+
+            memoryService.Write(levelPtr, currentLevel + diff);
+            memoryService.Write(gameData + offset, newValue);
+        }
+
+        public long GetHandle() =>
+            memoryService.Read<long>(GetPlayerIns() + WorldChrMan.PlayerInsOffsets.Handle);
+
+        public void ToggleNoGravity(bool isEnabled)
+        {
+            chrInsService.ToggleNoGravity(GetTorrentChrIns(), isEnabled);
+            chrInsService.ToggleNoGravity(GetPlayerIns(), isEnabled);
+        }
+
+        public void ToggleTorrentNoDeath(bool isEnabled) => chrInsService.ToggleNoDeath(GetTorrentChrIns(), isEnabled);
+
+        public void SetScadu(int value) =>
+            memoryService.Write(GetGameDataPtr() + (int)GameDataMan.PlayerGameDataOffsets.Scadutree, (byte)value);
+
+        public int GetScadu() =>
+            memoryService.Read<byte>(GetGameDataPtr() + (int)GameDataMan.PlayerGameDataOffsets.Scadutree);
+
+        public void SetSpiritAsh(int value) =>
+            memoryService.Write(GetGameDataPtr() + (int)GameDataMan.PlayerGameDataOffsets.SpiritAsh, (byte)value);
+
+        public int GetSpiritAsh() =>
+            memoryService.Read<byte>(GetGameDataPtr() + (int)GameDataMan.PlayerGameDataOffsets.SpiritAsh);
+
+        public int GetCurrentAnimation() => chrInsService.GetCurrentAnimation(GetPlayerIns());
+
+        public void ToggleTorrentAnywhere(bool isEnabled)
+        {
+            if (isEnabled)
+            {
+                memoryService.WriteBytes(Patches.IsTorrentDisabledInUnderworld, [0x30, 0xC0, 0x90]);
+                memoryService.WriteBytes(Patches.IsWhistleDisabled, [0x30, 0xC0, 0x90,]);
+                memoryService.Write(GetChrRidePtr() + (int)ChrIns.ChrRideOffsets.IsHorseWhistleDisabled, (byte)0);
+            }
+            else
+            {
+                memoryService.WriteBytes(Patches.IsTorrentDisabledInUnderworld, [0x0F, 0x95, 0xC0]);
+                memoryService.WriteBytes(Patches.IsWhistleDisabled, [0x0F, 0x95, 0xC0]);
+            }
+        }
+
+        private int CalculateLevelUpCost(int nextLevel)
+        {
+            float baseLevel = nextLevel + BaseLevelOffset;
+            float adjustedLevel = Math.Max(0f, baseLevel - LevelUpIncreaseInterval);
+            float cost = baseLevel * baseLevel
+                                   * (LevelUpCostIncrease * adjustedLevel + InitialLevelUpCost)
+                         + InitialLevelUpOffset;
+
+            return (int)cost;
+        }
+
+        private nint GetGameDataPtr() =>
+            memoryService.FollowPointers(GameDataMan.Base, [GameDataMan.PlayerGameData], true);
+
+        private nint GetChrDataPtr() =>
+            memoryService.FollowPointers(WorldChrMan.Base, [WorldChrMan.PlayerIns, ..ChrIns.ChrDataModule], true);
+
+        private nint GetChrPhysicsPtr() =>
+            memoryService.FollowPointers(WorldChrMan.Base, [WorldChrMan.PlayerIns, ..ChrIns.ChrPhysicsModule], true);
+
+        private nint GetChrRidePtr() =>
+            memoryService.FollowPointers(WorldChrMan.Base, [WorldChrMan.PlayerIns, ..ChrIns.ChrRideModule], true);
+
+        private nint GetChrInsFlagsPtr() =>
+            memoryService.FollowPointers(WorldChrMan.Base, [WorldChrMan.PlayerIns, ChrIns.Flags], false);
+
+        private Position GetPlayerPosition()
+        {
+            var playerIns = GetPlayerIns();
+
+            uint currentBlockId =
+                memoryService.Read<uint>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentBlockId);
+
+            var coords = memoryService.Read<Vector3>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentMapCoords);
+            var angle = memoryService.Read<float>(playerIns + WorldChrMan.PlayerInsOffsets.CurrentMapAngle);
+
+            return new Position(currentBlockId, coords, angle);
+        }
+
+        public void ToggleNoRoll(bool isEnabled)
+        {
+            actionRequestService.ToggleNoRoll(isEnabled);
+        }
+
+        public void SetSpeedBuffMode(SpeedBuffMode mode)
+        {
+            if (_currentMode == mode)
+                return;
+
+            var speedyBuffCode = CodeCaveOffsets.Base + CodeCaveOffsets.SpeedyBuff;
+
+            var speedActiveFlag = CodeCaveOffsets.Base + CodeCaveOffsets.SpeedActiveFlag;
+            var allowedInCombat = CodeCaveOffsets.Base + CodeCaveOffsets.AllowSpeedBuffInCombat;
+
+            var wasEnabled = _currentMode != SpeedBuffMode.Off;
+            var isEnabled = mode != SpeedBuffMode.Off;
+
+            if (!wasEnabled && isEnabled)
+            {
+                InstallSpeedyBuffingHook(speedyBuffCode, speedActiveFlag);
+            }
+            else if (wasEnabled && !isEnabled)
+            {
+                hookManager.UninstallHook(speedyBuffCode);
+                if (memoryService.Read<byte>(speedActiveFlag) == 1)
+                {
+                    var csFlipper = memoryService.Read<nint>(CSFlipperImp.Base);
+                    memoryService.Write(csFlipper + CSFlipperImp.GameSpeed, 1f);
+                }
+            }
+
+            memoryService.Write(allowedInCombat, mode == SpeedBuffMode.AllowedInCombat);
+            _currentMode = mode;
+        }
+
+        private void InstallSpeedyBuffingHook(nint code, nint speedActiveFlag)
+        {
+            var idTable = CodeCaveOffsets.Base + CodeCaveOffsets.TimeActBuffTable;
+            memoryService.WriteBytes(idTable, BuffPrefixTable);
+            
+            memoryService.Write(speedActiveFlag, false);
+
+            var allowedInCombat = CodeCaveOffsets.Base + CodeCaveOffsets.AllowSpeedBuffInCombat;
+
+            var bytes = AsmLoader.GetAsmBytes(AsmScript.SpeedBuff);
+            
+            AsmHelper.WriteRelativeOffsets(bytes, [
+                (code + 0x5 , WorldChrMan.Base, 7, 0x5 + 3),
+                (code + 0x17, Hooks.SpeedyBuff + 5, 6, 0x17 + 2),
+                (code + 0x1D, allowedInCombat, 7, 0x1D + 2),
+                (code + 0x26, CSSound.Base, 7, 0x26 + 3),
+                (code + 0x3A, Hooks.SpeedyBuff + 5, 5, 0x3A + 1),
+                (code + 0x45, idTable, 7, 0x45 + 3),
+                (code + 0x60, speedActiveFlag, 7, 0x60 + 2),
+                (code + 0x69, CSFlipperImp.Base, 7, 0x69 + 3),
+                (code + 0x7A, speedActiveFlag, 7, 0x7A + 2),
+                (code + 0x83, CSFlipperImp.Base, 7, 0x83 + 3),
+                (code + 0x94, speedActiveFlag, 7, 0x94 + 2),
+                (code + 0x9E, Hooks.SpeedyBuff + 5, 5, 0x9E + 1)
+            ]);
+            
+            AsmHelper.WriteImmediateDwords(bytes, [
+                (WorldChrMan.PlayerIns, 0xC + 3),
+                (CSFlipperImp.GameSpeed, 0x70 + 2),
+                (CSFlipperImp.GameSpeed, 0x8A + 2),
+            ]);
+            
+            memoryService.WriteBytes(code, bytes);
+            hookManager.InstallHook(code, Hooks.SpeedyBuff, [0x48, 0x89, 0x5C, 0x24, 0x10]);
+        }
+    }
+}

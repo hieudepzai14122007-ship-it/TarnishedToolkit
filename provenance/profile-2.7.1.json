@@ -1,0 +1,23 @@
+{
+  "inspected_date": "2026-09-09",
+  "game_file_version": "2.7.1.0",
+  "steam_build_id": "25080141",
+  "executable_bytes": 87042128,
+  "executable_sha256": "1a3547101327f65d0c76da2f9190ac0aa66871ea42bae2aecc61e11a8b597891",
+  "source_commit": "8df23f1b19c62997ba9e3822495c1d2bd001ab88",
+  "source_sha256": "e063453b611010839bda9ff51d2322e87413b8c5648dfc0b02d20a8417b29bef",
+  "verified_shared_rvas": {
+    "WorldChrMan": "0x3d69ff8",
+    "MenuMan": "0x3d6f820",
+    "ChrDbgFlags": "0x3d6a210",
+    "GameDataMan": "0x3d61f98",
+    "CSFlipperImp": "0x458db58",
+    "MapItemManImpl": "0x3d6bac0",
+    "ItemSpawn": "0x561400",
+    "GetPlayerItemQuantityById": "0x785e50",
+    "GiveRunes": "0x25e0e0"
+  },
+  "native_headers_match_2_7_0": true,
+  "native_headers_checked_in_executable_sections": true,
+  "live_game_tested": false
+}

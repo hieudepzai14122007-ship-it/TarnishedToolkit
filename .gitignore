@@ -1,0 +1,16 @@
+/build/
+/cmake-build/
+/research/
+/dist/
+/installation.json
+/installation.uninstalled.json
+/launch-backups/
+/previous-builds/
+/mod_loader_config.original.ini
+*.tmp
+*.log
+*.sl2
+*.sl2.bak
+.env
+.env.*
+/.vs/

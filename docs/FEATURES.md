@@ -1,0 +1,24 @@
+# Feature delivery status — 0.2.5 beta
+
+**Implemented** means working code exists, not that its gameplay effect has been live tested. This update was built and tested without launching the game or renderer. All new gameplay adapters are experimental.
+
+| Area | Implemented | Remaining integration |
+| --- | --- | --- |
+| Launch separation | Schema-2 installation under sibling OfflineGame; Steam proxies and old mod files preserved outside Game; desktop offline shortcut; copied code, shared large assets refreshed before offline launches; update/removal preserve separation | User verification of Steam and offline launch; separate character saves are not implemented |
+| Mouse/input | Recenter/confinement hooks; Win32, Raw Input, standard DirectInput and XInput capture; focus-loss release; controller-state clearing; modal cancel; LB/RB categories; configurable 0.65-second hold opening chord | Live fullscreen/borderless, Alt+Tab and controller checks; other input implementations; game-binding collision detection and emergency remapping |
+| Home | Overview, active flags, individual disable, Disable All, category favorites, search, profiles with preview/apply | Feature-level rather than category favorites; full feature metadata registry |
+| Player | Refill, ordinary-death prevention, HP damage protection, FP/stamina flags, seven buildup controls; editable attributes with preview, level/history planning and owned rollback | Native rebirth/derived-stat recalculation callback; independent fall/movement controls |
+| Torrent | Temporary repeated air-jump toggle on exact 2.7.1.0; two native ride-flag hooks restricted to local mounted player, reset on dismount/loading/profile apply/Disable All | Live jumping and timing checks, other executable profiles, fall protection |
+| Combat | Nearby-entity selection, HP and poise sample | Actual lock-on hook, player-only damage routing, eligible consumable preservation, independent attack/casting speed, one-hit and nonlethal behavior |
+| Inventory | 2,034 source catalog entries, name/type/content filters; 1,599 eligible base-game grants including 377 default +0 weapons/shields/casting tools; duplicate weapon copies allowed; selected-item ownership, stale preview rejection | DLC entitlement, weapon upgrade/affinity validation, eligible consumables/spirit ashes, all-item ownership filtering |
+| Runes | Engine-backed positive addition with preview, bounds and observed result | Absolute amount editing/removal and verified in-game gain semantics |
+| Builds | Six editable named planning slots, save/load, selected-row missing count, explicit individual grants, exact material pack plans | Verified automatic equip, complete missing-item scan/bulk grant; named slots start empty and do not imply preselected loadouts |
+| Travel | Position/orientation, session bookmarks, same-map return within 100 m while dismounted | Ground/combat/cutscene detection; supported grace travel/world time; noclip recovery. Return is an explicit experiment |
+| Practice | Manual timing, modifier marking, timer HUD, session list, shortest manual attempt and CSV; resource refill | Verified encounter events, outcomes, hit/damage attribution, per-boss reset/phase/reward handling |
+| Camera | Global simulation speed 0.25–1.5x | Game HUD/FOV/free camera with cutscene restoration; pause/frame step |
+| Profiles | Explorer, Build Lab, Vanilla; custom temporary-setting profiles, no startup application or persistent actions | Boss Learner/Glass Cannon/Photo depend on missing combat/camera adapters |
+| Lifecycle | Exact 2.7.0.0/2.7.1.0 executable hashes, explicit player-reader diagnostics, pointer/handle/map generation, pre-action identity sampling, owned-byte/bit/value restoration, temporary modifier reset after observed invalidity; offline confirmation acknowledged immediately, independent of loading/generation and retained until unchecked or Disable All | Verified engine-thread dispatch, automatic session monitoring, elimination of memory races, complete cutscene/transition tests |
+
+No boss event flags, weapon upgrade parameters or quest/key catalogs are exposed through arbitrary write controls. Attribute editing uses a constrained, persistent trainer workflow; its starting-class minima and engine-thread recalculation remain unverified. No unrestricted give-everything action is implemented. Disable All stops future suppression and restores owned temporary flags/speed where still valid; it does not reverse resource refills, cleared buildup, position changes, inventory, runes or successful attribute changes.
+
+The complete proposed feature catalog and live acceptance criteria remain unfinished. Missing engine semantics are documented explicitly rather than filled with guessed addresses or unrelated global effects.

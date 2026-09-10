@@ -1,0 +1,31 @@
+{
+  "game_sha256": "1a3547101327f65d0c76da2f9190ac0aa66871ea42bae2aecc61e11a8b597891",
+  "game_file_version": "2.7.1.0",
+  "reference_repo": "https://github.com/Hexinton/eldenringcheatengine",
+  "reference_commit": "e2c2d20ad92542d46dce41c9faf183dbd6f18f3d",
+  "archive_sha256": "4ebf38a8eff2587053680fdc3249dd7b8e2d51d5dc52b42491313883d45e9041",
+  "entry_name": "Infinite Player / Horse Jumps",
+  "scope": "Only factual horse flag instruction sites; no upstream trainer code or player-on-foot patch copied into mod. Exact game instructions independently inspected.",
+  "sites": [
+    {
+      "rva": "0x475e1c",
+      "search_pattern": "88 87 ? ? ? ? 48 8b 83 ? ? ? ? 48 8b 48 ? 80 b9",
+      "executable_section_matches": 1,
+      "instruction": "88 87 34 01 00 00",
+      "context": "88 87 34 01 00 00 48 8b 83 90 01 00 00 48 8b 48 68 80 b9"
+    },
+    {
+      "rva": "0x475e4f",
+      "search_pattern": "88 87 ? ? ? ? 48 8b 83 ? ? ? ? 48 8b 48 ? e8 ? ? ? ? 88 87",
+      "executable_section_matches": 1,
+      "instruction": "88 87 35 01 00 00",
+      "context": "88 87 35 01 00 00 48 8b 83 90 01 00 00 48 8b 48 70 e8 db 84 fd ff 88 87"
+    }
+  ],
+  "owner_getter_rva": "0x43d250",
+  "owner_getter_bytes": "48 8b 41 08 c3",
+  "ride_update_entry": "0x475c00",
+  "ride_update_prologue": "4c 8b dc 57 48 83 ec 60 48 8b 05 01 92 7e 03 48 33 c4 48 89 44 24 40 80 79 31 00 48 8b f9 0f 84 07 04 00 00 48 8b 49 10",
+  "register_evidence": "Ride update copies RCX to RDI; owner getter returns [RCX+8]. Hooked MOVs write ride-module flags134/135. Current-player identity, handle, mount state and loading flags are rechecked in custom assembly.",
+  "live_game_tested": false
+}
